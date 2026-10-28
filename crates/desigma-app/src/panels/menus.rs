@@ -109,6 +109,8 @@ pub enum Action {
     ToggleUpdateCheck,
     /// Preferences -> Allow MCP agents to control this editor.
     ToggleAgentBridge,
+    /// Preferences -> Claude…: register the installed MCP server with Claude.
+    Mcp,
     /// Help -> Check for updates.
     CheckForUpdates,
     Shortcuts,
@@ -230,6 +232,10 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
         Action::ToggleGpu => app.toggle_gpu(),
         Action::ToggleUpdateCheck => app.toggle_update_check(),
         Action::ToggleAgentBridge => app.toggle_agent_bridge(ctx),
+        Action::Mcp => {
+            app.mcp_error = None;
+            app.mcp_dialog = true;
+        }
         Action::CheckForUpdates => app.check_for_updates(ctx, true),
         Action::Shortcuts => app.show_shortcuts(),
         Action::AboutDesigma => app.show_about(),
@@ -486,6 +492,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
                 leaf("Check for updates automatically", "", Action::ToggleUpdateCheck)
                     .on(crate::RELEASE_BUILD && !app.updater.no_auto_check)
                     .off(!crate::RELEASE_BUILD),
+                leaf("Claude\u{2026}", "", Action::Mcp),
                 leaf("Allow MCP agents to control this editor", "", Action::ToggleAgentBridge).on(app.bridge.bridge.is_some()),
             ],
         ),

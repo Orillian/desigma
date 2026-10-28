@@ -29,6 +29,7 @@ mod lint;
 mod loopback;
 #[cfg(target_os = "macos")]
 mod macos;
+mod mcp_link;
 mod motion;
 mod ops;
 mod panels;
