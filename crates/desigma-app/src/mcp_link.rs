@@ -129,7 +129,7 @@ pub fn show(app: &mut App, ctx: &Context) {
         p.galley(Pos2::new(x0, rect.top() + 52.0), galley, theme::TEXT_SECONDARY);
         p.text(Pos2::new(x0, rect.top() + 128.0), Align2::LEFT_CENTER, status, theme::font_body_strong(), theme::TEXT);
         if let Some(err) = &app.mcp_error {
-            let g = p.layout(err.clone().into(), theme::font_small(), theme::DANGER, text_w);
+            let g = p.layout(err.clone(), theme::font_small(), theme::DANGER, text_w);
             p.galley(Pos2::new(x0, rect.top() + 148.0), g, theme::DANGER);
         }
         let by = rect.bottom() - PAD - 32.0;
