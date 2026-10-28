@@ -362,4 +362,40 @@ impl App {
             _ => None,
         }
     }
+
+    /// Copies a design opened from outside the library into `shared/`, which is inside the folder
+    /// assistants are allowed to read. Library files are already there and are not copied.
+    pub fn publish_shared_copy(&mut self) {
+        let Some(lib) = self.lib.clone() else { return };
+        if self.lib_file.is_some() {
+            return;
+        }
+        if let Err(e) = write_shared(lib.root(), &self.doc) {
+            self.show_toast(format!("Could not share the file with assistants: {e}"), true);
+        }
+    }
+}
+
+/// File name safe on Windows, used for the readable copy under `shared/`.
+fn shared_file_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || c == ' ' || c == '-' || c == '_' {
+            out.push(c);
+        }
+    }
+    let out = out.trim();
+    if out.is_empty() {
+        "Imported".into()
+    } else {
+        out.chars().take(80).collect()
+    }
+}
+
+fn write_shared(root: &std::path::Path, doc: &Document) -> Result<(), String> {
+    let dir = root.join(desigma_library::SHARED_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.desigma", shared_file_name(&doc.name)));
+    let json = doc.to_json().map_err(|e| e.to_string())?;
+    desigma_library::write_atomic(&path, json.as_bytes()).map_err(|e| e.to_string())
 }

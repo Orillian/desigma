@@ -9,6 +9,7 @@
 //! trash/<file-id>/...                       restorable until emptied by the user
 //! versions/<file-id>/<n>.desigma, index.json  version history (`versions.rs`)
 //! settings.json                             app settings kept by the editor (the author name for comments)
+//! shared/<name>.desigma                     readable copy of a file opened from outside the library
 //! libraries/<library-id>/<version>.json     published library snapshots (`publish.rs`)
 //! ```
 //!
@@ -25,6 +26,10 @@ pub use store::*;
 pub use versions::*;
 
 use std::path::{Path, PathBuf};
+
+/// Readable copies of designs opened from outside the library. The MCP server lists these
+/// beside the library catalog so an assistant can open them without the original folder.
+pub const SHARED_DIR: &str = "shared";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
