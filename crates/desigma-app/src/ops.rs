@@ -846,8 +846,8 @@ impl App {
         if !self.leave_ok(move |app| app.open_path(again)) {
             return;
         }
-        match io::load_path(&p) {
-            Ok(doc) => {
+        match io::load_path_noted(&p) {
+            Ok((doc, notes)) => {
                 let name = doc.name.clone();
                 let outside = self.lib.as_ref().is_some_and(|lib| path_outside_library(lib.root(), &p));
                 // An SVG becomes a new unsaved document, never overwritten by Save.

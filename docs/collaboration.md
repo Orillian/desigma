@@ -51,7 +51,8 @@ Ops (crate `desigma-collab`):
 | `Patch { id, fields }` | Changed top-level `Node` fields, as `field name → JSON value`. |
 | `Move { id, parent, after }` | Reparent or reorder. |
 | `Delete { id }` | Remove a node and its subtree. |
-| `DocPatch { fields }` | Changed document-level fields (styles, variables, comments, flows, guides, timelines, pages order, board session…). |
+| `DocPatch { fields }` | Changed whole-value document fields: `name`, `kind`, `prototype_device`, `library`, `library_page` and the `pages` order. |
+| `DocEntry { field, key, value }` | One entry of a keyed document collection (styles, variables, comments, board votes, flows, guides, timelines): set it, or remove it when `value` is `None`. `key` is a path (see below). |
 | `Image { hash }` | A new embedded image is available; bytes are fetched on demand. |
 
 The diff only compares nodes that changed since the last diff; unchanged ones are equal by
@@ -64,6 +65,24 @@ The diff only compares nodes that changed since the last diff; unchanged ones ar
 * **Optimistic local edits.** A guest applies its own edits immediately and sends them. While a
   guest has unacknowledged changes to a field, incoming changes to that field are held back, so
   values don't flicker back and forth. The host's acknowledgement then settles the final value.
+* **Document collections: last writer wins, per entry.** Styles, variables, comments, board votes,
+  flows, guides and timelines are not sent as whole values. The sync layer sees each as a map from an
+  entry key to a value and sends only the entries that changed (`Op::DocEntry`), so two people adding
+  or editing different entries both win. The same entry: the host's order decides, like a property.
+  Removing an entry removes what is under it. Entry keys:
+
+  | Field | Entries |
+  |---|---|
+  | `styles` (with `style_meta`) | by style id; the style and its metadata are one entry, so a concurrent edit never mixes the two |
+  | `variables`, `variable_collections` | by id. A collection's `variables` list is merged: variables two people added to the same collection at once are both listed |
+  | `comments` | `[thread]` is the thread (anchor, resolved) without its messages, `[thread, message]` one message. Two replies to one thread both survive, and resolving while someone replies keeps both. A reply to a thread deleted at the same moment is dropped (delete wins). Threads are ordered by the time of their first message, messages by `created`, ties by id, on every peer |
+  | `board_session` | `[timer]` (the whole timer is one value), `[vote]` (votes per person and `ended`), `[vote, node, voter]` (one person's count on one node; the node's tally is the sum). Every person writes only their own voter entries, so votes on the same node at once all count |
+  | `flows` | by start frame (a frame starts at most one flow); kept in start-node order |
+  | `guides`, `timelines` | by page; a page's guide list is one value |
+
+  Whole-value last writer wins stays for `name`, `kind`, `prototype_device`, `library` and
+  `library_page`. `pages` keeps its own merge: the order is the last writer's, pages it did not
+  know survive.
 * **Structure is validated by the host.** Moving a node under its own descendant, into a
   non-container, or under a deleted parent is rejected. The host then sends the guest a
   correction: the current state of the affected nodes.
@@ -77,11 +96,21 @@ The diff only compares nodes that changed since the last diff; unchanged ones ar
 (host 0, guests 1, 2, …) and allocates ids in its own range `(peer << 40) | n`. Existing ids keep
 working.
 
+Ids of the other keyed collections are made so that two people creating one at the same time cannot
+pick the same: variable and collection ids are `prefix:d{peer}-{n}` (plain `prefix:d{n}` outside a
+session), style keys carry `(p{peer})`, comment threads and messages are random UUIDs, flows are keyed
+by their start node.
+
 ### Undo
 
 Each person's undo reverts only their own changes. When a remote patch arrives, the matching
 fields in the stored inverse commands of the local `History` are updated to the remote values.
-Undoing an earlier local edit then does not revert someone else's newer change. An undo is an
+Undoing an earlier local edit then does not revert someone else's newer change.
+The commands that snapshot a whole collection (`SetStyles`, `SetComments`, `SetVariables`,
+`SetBoardSession`, `SetFlows`, `SetGuides`, `SetTimeline`) are rebased per entry the same way: a
+remote entry is set in the stored snapshot (or removed from it), the rest stays. Undoing my style
+leaves yours. One consequence: if someone edits an entry I created, my undo of the creation leaves
+it, with their edit. An undo is an
 ordinary local edit, so it syncs through the diff like any other.
 
 ### Joining
@@ -132,7 +161,8 @@ iroh runs on Windows, macOS and Linux; the protocol is the same everywhere. The
 `CFBundleURLTypes` in `Info.plist` on macOS, `x-scheme-handler` in the `.desktop` file on Linux.
 Pasting the link always works as a fallback. See "Links and files reach the running editor" below.
 
-Every peer must speak the same protocol version. A mismatch is refused with "update desigma".
+Every peer must speak the same protocol version. A mismatch is refused with "update desigma". Protocol 3 sends keyed collections per entry: `Op::DocEntry`, `Ack::entries` (the host's value of each
+entry the batch wrote) and `Fix::Entries`.
 
 ## Limits of the first version
 
@@ -287,9 +317,49 @@ notes in its README).
   system, so every `Fonts` request is answered with empty bytes ("cannot share").
 * **Authority and persistence.** It applies guests' ops to its own document, autosaves when changed (default
   10 s) and on Ctrl-C / `SIGTERM`, always temp file plus rename, with rotating `FILE.bak.N` backups.
-  `.fig` / REST `.json` / `.svg` inputs are imported once and saved as `.desigma` next to the source.
+  `.fig` / `.pen` / REST `.json` / `.svg` inputs are imported once and saved as `.desigma` next to the source.
 * **Stable link.** `HostOptions` gained `secret_key` (fixed endpoint identity) and `port`; the server keeps the
   key in `.<name>.desigma-key` (mode 0600 on Unix). `Ticket::relay_only` drops direct addresses so the link
   does not change when the IP does.
 * **No approval.** Nobody is there to click Accept, so everyone passing the password is let in; the password
   (preferably via `--password-env`) is the gate, and `--view-only` makes everyone a viewer.
+
+## Keyed collections (protocol 3)
+
+Code: `crates/desigma-collab/src/entries.rs`. Before protocol 3 every document-level field travelled as one
+`DocPatch` value, so two people adding a comment, a vote, a style or a variable at the same time lost one.
+
+* **One op, a path as key.** `Op::DocEntry { field, key, value }` sets one entry (`value: Some`) or removes it
+  (`None`). `entries(doc, field)` reads a field as a flat map from key path to JSON, `diff` compares the maps of
+  the shadow and the document, and `apply` writes one entry. Parents come before children (a comment thread
+  before its replies) and removals before sets; a removed parent takes its children with it.
+* **A write into a missing parent** (a reply to a deleted thread, a vote when the session is gone) is refused by
+  the host with a correction (the host's value of that entry, `Fix::Entries`), and dropped by guests.
+* **Guests.** Pending writes are tracked per entry; a host write to an entry with an unacknowledged local write is
+  held back, as for node fields. `Ack::entries` carries the host's value of every entry the batch wrote, which
+  settles entries that lost the race. Entries that came from the host with a value different from the local one
+  are in `Received::applied`, so history is rebased.
+* **History.** `rebase_history` sets (or removes) the entry in the stored snapshots of `SetStyles`, `SetComments`,
+  `SetVariables`, `SetBoardSession`, `SetFlows`, `SetGuides` and `SetTimeline`; for variables the list of a
+  collection in the snapshot is cut to the variables the snapshot has.
+* **Reconnect.** `GuestSession::rejoin` works on diffs, so offline entries are laid over the new snapshot per
+  entry.
+* **Order.** Comment threads and flows are kept sorted after every entry write (threads by first message time
+  then id, messages by `created` then id, flows by start node), so all peers end up with the same order. Local
+  edits that append out of that order are put in order by the next entry write from anyone.
+* **Votes per person.** A vote is the entry `[vote, node, voter]` -> that voter's count, and a node's tally is the
+  sum over its voters, so two people voting on one sticky at once both count. The voter id is a random id kept per
+  install in `settings.json` (`voter_id`), not the peer index, so it survives restarts and reconnects and works
+  offline. Each person only writes their own voter entries, and "N votes each" counts only that person's votes.
+  Files saved before this kept a plain count per node; they load as the votes of the voter `legacy` (totals stay
+  the same) and save in the new shape (`{"node": {"voter": n}}`). The wire shape of the key changed without a
+  version bump, as protocol 3 had not shipped.
+* **Ids made at the same time.** New variable and collection ids are `prefix:d{peer}-{n}` when the document has an id
+  peer (`Document::id_peer()`, set by the session) and `prefix:d{n}` otherwise, so existing ids and files are
+  unchanged; style keys likewise (`Color style {n} (p{peer})`, `Document::fresh_style_key`). Comment thread and
+  message ids are random UUIDs and flows are keyed by start node, so those were already unique.
+* **Known limits.** Removing the first message of a thread changes where the thread sorts.
+* **Tests.** `sim.rs`: focused cases (concurrent comments, replies, resolve with reply, delete with reply, votes,
+  styles, same-style edit, variables, flows/guides/timelines, undo of own style/comment/vote/variable, viewer,
+  invalid entries) and `run_keyed_sim`, where every peer only adds distinct keys (also across outages) and every
+  addition must be in the final document; the general random simulations now include keyed edits too.
