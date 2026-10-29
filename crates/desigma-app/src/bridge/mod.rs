@@ -82,6 +82,8 @@ struct OpenArgs {
 #[serde(deny_unknown_fields)]
 struct SaveArgs {
     path: PathBuf,
+    #[serde(default)]
+    overwrite: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -265,12 +267,7 @@ impl App {
                     return Err("Save path must be an absolute .desigma path".into());
                 }
                 let bytes = self.doc.to_json().map_err(|e| e.to_string())?;
-                let mut f = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&a.path)
-                    .map_err(|e| format!("Cannot create file (choose an unused .desigma filename): {e}"))?;
-                std::io::Write::write_all(&mut f, bytes.as_bytes()).map_err(|e| format!("Cannot save design: {e}"))?;
+                desigma_mcp::engine::write_design(&a.path, bytes.as_bytes(), a.overwrite)?;
                 self.show_toast(format!("Saved copy {}", a.path.display()), false);
                 Ok(json!({"path":a.path,"saved":true}))
             }

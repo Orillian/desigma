@@ -36,3 +36,58 @@ async fn stdio_handshake_discovery_edit_and_error_recovery() {
     .await
     .expect("MCP subprocess must finish within 30 seconds");
 }
+
+/// Requests written in one burst run, and are answered, in the order they were sent (#31):
+/// a create followed by a read must see the created layer.
+#[test]
+fn batched_requests_run_in_order() {
+    use std::io::{BufRead, BufReader, Write};
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_desigma-mcp"))
+        .arg("--workspace")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .env(desigma_mcp::live::ENV_FILE, "")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut batch = String::new();
+    let mut line = |v: Value| batch.push_str(&format!("{v}\n"));
+    line(
+        json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"batch","version":"1"}}}),
+    );
+    line(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
+    const N: u64 = 60;
+    // The page of a new document is node 1 in a file session.
+    for i in 1..=N {
+        let (name, args) = if i % 2 == 1 {
+            ("desigma_create_node", json!({"parent_id":1,"kind":"rectangle","name":format!("r{i}")}))
+        } else {
+            ("desigma_list_nodes", json!({"parent_id":1}))
+        };
+        line(json!({"jsonrpc":"2.0","id":i,"method":"tools/call","params":{"name":name,"arguments":args}}));
+    }
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(batch.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    let mut ids = Vec::new();
+    let mut buf = String::new();
+    while ids.len() < N as usize + 1 {
+        buf.clear();
+        assert!(out.read_line(&mut buf).unwrap() > 0, "server closed early after {ids:?}");
+        let v: Value = serde_json::from_str(&buf).unwrap();
+        let Some(id) = v["id"].as_u64() else { continue };
+        ids.push(id);
+        if id > 0 && id % 2 == 0 {
+            // list_nodes right after the (id-1)th create sees exactly id/2 rectangles
+            let text = v["result"]["structuredContent"].to_string();
+            let created = (1..id).filter(|k| k % 2 == 1).count();
+            assert_eq!(text.matches("\"kind\":\"Rectangle\"").count(), created, "response {id} saw a different tree: {text}");
+        }
+    }
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(ids, (0..=N).collect::<Vec<_>>(), "responses come back in request order");
+}
