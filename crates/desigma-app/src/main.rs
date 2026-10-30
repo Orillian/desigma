@@ -93,6 +93,11 @@ fn main() {
         println!("desigma {VERSION}");
         return;
     }
+    if opts.print_library_path {
+        let root = opts.library.clone().unwrap_or_else(desigma_library::Library::default_root);
+        println!("{}", root.display());
+        return;
+    }
     if let Some(file) = &opts.export_animation {
         match motion::playback::export::run_cli(file, opts.format.as_deref(), opts.out.as_deref(), opts.fps, opts.scale, opts.select.as_deref(), opts.dither) {
             Ok(msg) => println!("desigma: {msg}"),
@@ -146,7 +151,9 @@ fn main() {
     // normally started when the window closed; this catches a close that skipped that frame
     updater::install::run_stashed();
     if screenshot_mode && !shell::SHOT_OK.load(Ordering::SeqCst) {
-        eprintln!("desigma: screenshot was not captured");
+        let why = shell::SHOT_ERR.lock().map(|e| e.clone()).unwrap_or_default();
+        let why = if why.is_empty() { "the window closed before a frame was captured".to_string() } else { why };
+        eprintln!("desigma: screenshot was not captured: {why}");
         std::process::exit(1);
     }
 }
