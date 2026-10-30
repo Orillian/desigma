@@ -5,7 +5,6 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -22,6 +21,8 @@ pub struct Session {
     discovery: Option<PathBuf>,
     /// Latched on the first call so a vanished editor never turns into a silent file session.
     mode: Option<Mode>,
+    /// The `.desigma` file this session was opened from or last saved to, if any.
+    path: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -43,6 +44,8 @@ struct OpenArgs {
 #[serde(deny_unknown_fields)]
 struct SaveArgs {
     path: String,
+    #[serde(default)]
+    overwrite: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,7 +72,7 @@ impl Session {
         if !root.is_dir() {
             return Err("Workspace must be a directory".into());
         }
-        Ok(Self { engine: Engine::default(), root, dirty: false, discovery, mode: None })
+        Ok(Self { engine: Engine::default(), root, dirty: false, discovery, mode: None, path: None })
     }
 
     fn input_path(&self, path: &str) -> Result<PathBuf, String> {
@@ -161,6 +164,7 @@ impl Session {
                 self.engine = Engine::default();
                 self.engine.doc = doc;
                 self.dirty = false;
+                self.path = path.extension().is_some_and(|x| x == "desigma").then_some(path);
                 self.document(json!({}))
             }
             "desigma_new_document" => {
@@ -174,24 +178,16 @@ impl Session {
                 self.engine = Engine::default();
                 self.engine.doc.name = a.name;
                 self.dirty = true;
+                self.path = None;
                 self.document(json!({}))
             }
             "desigma_save_file" => {
                 let a: SaveArgs = parse(args)?;
                 let path = self.output_path(&a.path)?;
                 let bytes = self.engine.doc.to_json().map_err(|e| e.to_string())?;
-                // create_new also rejects existing symlinks and never truncates a user's file.
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)
-                    .map_err(|e| format!("Cannot create file (choose an unused .desigma filename): {e}"))?;
-                if let Err(e) = file.write_all(bytes.as_bytes()).and_then(|_| file.sync_all()) {
-                    drop(file);
-                    let _ = fs::remove_file(&path);
-                    return Err(format!("Cannot save design: {e}"));
-                }
+                crate::engine::write_design(&path, bytes.as_bytes(), a.overwrite)?;
                 self.dirty = false;
+                self.path = Some(path.clone());
                 Ok(json!({"path": path, "saved": true}))
             }
             "desigma_export_image" => {
@@ -265,6 +261,7 @@ impl Session {
     fn document(&mut self, args: Value) -> Result<Value, String> {
         let mut v = self.engine.call("desigma_get_document", args)?;
         v["session"] = json!("file");
+        v["path"] = json!(self.path.as_ref().and_then(|p| p.strip_prefix(&self.root).ok()));
         Ok(v)
     }
 }
@@ -279,7 +276,7 @@ pub fn tools() -> Vec<Tool> {
     let mut raw = crate::engine::tools();
     for (name, description, properties, required) in [
         ("desigma_open_file", "Open a .desigma, .fig, .pen (Pencil), SVG or Figma REST JSON file inside the workspace: in the editor when its agent bridge is on, otherwise into the isolated file session. Refuses while the session (or the editor) has unsaved edits; ask the user to save, or pass discard_changes=true to throw them away.", json!({"path":{"type":"string"},"discard_changes":{"type":"boolean","default":false}}), vec!["path"]),
-        ("desigma_save_file", "Save the document to a NEW .desigma file inside the workspace (in the editor: a copy; its own file path is unchanged). Existing files are never overwritten. Parent directory must exist.", json!({"path":{"type":"string"}}), vec!["path"]),
+        ("desigma_save_file", "Save the document as a .desigma file inside the workspace (in the editor: a copy; its own file path is unchanged). By default the file must not exist yet; pass overwrite=true to replace an existing .desigma file atomically, e.g. the `path` desigma_get_document reports. Parent directory must exist.", json!({"path":{"type":"string"},"overwrite":{"type":"boolean","default":false}}), vec!["path"]),
         ("desigma_new_document", "Start a blank document with one page. Refuses while the session (or the editor) has unsaved edits; ask the user to save, or pass discard_changes=true to throw them away.", json!({"name":{"type":"string","minLength":1,"maxLength":1024},"discard_changes":{"type":"boolean","default":false}}), vec!["name"]),
     ] {
         raw.push(json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":name != "desigma_save_file","idempotentHint":false,"openWorldHint":false}}));

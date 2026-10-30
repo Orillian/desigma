@@ -218,6 +218,44 @@ pub fn export_image<H: Host>(host: &H, node_id: u64, scale: f32) -> Result<(Vec<
     Ok((png, pm.width(), pm.height()))
 }
 
+/// Writes a saved design to `path`. Without `overwrite` the file must not exist (and an
+/// existing symlink is never followed). With `overwrite` the bytes go to a temporary file in
+/// the same directory first and replace the target with one rename, so a reader never sees a
+/// half-written file; a symlink at `path` is refused rather than written through.
+pub fn write_design(path: &std::path::Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
+    use std::io::Write;
+    if !overwrite {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|e| format!("Cannot create file (choose an unused .desigma filename, or pass overwrite=true): {e}"))?;
+        if let Err(e) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(format!("Cannot save design: {e}"));
+        }
+        return Ok(());
+    }
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink() || !m.is_file()) {
+        return Err("Cannot overwrite: the path exists and is not a regular file".into());
+    }
+    let dir = path.parent().ok_or("Save path needs a parent directory")?;
+    let name = path.file_name().ok_or("Save path needs a filename")?.to_string_lossy();
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let res = (|| {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = res {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Cannot save design: {e}"));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportArgs {
