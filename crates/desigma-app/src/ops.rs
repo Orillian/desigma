@@ -849,6 +849,7 @@ impl App {
         match io::load_path_noted(&p) {
             Ok((doc, notes)) => {
                 let name = doc.name.clone();
+                let source = p.clone();
                 // An SVG becomes a new unsaved document, never overwritten by Save.
                 let svg = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"));
                 self.replace_document(doc, (!svg).then_some(p));
@@ -860,6 +861,7 @@ impl App {
                         self.show_toast(format!("Opened {name}. Not carried over: {first}{more}"), false);
                     }
                 }
+                self.publish_shared_copy(&source);
             }
             Err(e) => self.show_toast(e, true),
         }
@@ -881,8 +883,9 @@ impl App {
             Ok(p) => {
                 self.show_toast(format!("Saved {}", p.display()), false);
                 if self.lib_file.is_none() {
-                    self.file_path = Some(p);
+                    self.file_path = Some(p.clone());
                     self.file_hash = Some(crate::home::session::doc_hash(&self.doc));
+                    self.publish_shared_copy(&p);
                 }
             }
             Err(e) => self.show_toast(e, true),
