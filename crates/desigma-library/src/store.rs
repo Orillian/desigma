@@ -140,7 +140,8 @@ pub fn load_external(path: &Path) -> Result<Document> {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("svg");
             let mut doc = Document::new(name);
             let page = doc.add_page("Page 1");
-            desigma_svg::import_svg_named(&text, name, &mut doc, page, Vec2::ZERO).map_err(|e| invalid(format!("Cannot import SVG: {e}")))?;
+            let opts = desigma_svg::ImportOptions { base_dir: path.parent().map(Path::to_path_buf) };
+            desigma_svg::import_svg_named_with(&text, name, &mut doc, page, Vec2::ZERO, &opts).map_err(|e| invalid(format!("Cannot import SVG: {e}")))?;
             doc
         }
         "json" => {
