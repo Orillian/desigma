@@ -542,7 +542,8 @@ impl Shell {
         }
         let p = ui.painter();
         let font = theme::font_body();
-        let w = widgets::text_width(p, &t.text, &font) + 48.0;
+        let text = crate::i18n::tr_text(&t.text);
+        let w = widgets::text_width(p, &text, &font) + 48.0;
         let r = Rect::from_center_size(
             Pos2::new(screen.center().x, screen.bottom() - theme::TOAST_BOTTOM - theme::TOAST_HEIGHT / 2.0),
             Vec2::new(w, theme::TOAST_HEIGHT),
@@ -550,7 +551,7 @@ impl Shell {
         widgets::elevation_shadow(p, r, theme::TOAST_RADIUS);
         p.rect_filled(r, theme::cr(theme::TOAST_RADIUS), theme::BG_MENU);
         p.circle_filled(Pos2::new(r.left() + 16.0, r.center().y), 4.0, if t.error { theme::DANGER } else { theme::BG_BRAND });
-        p.text(Pos2::new(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, &t.text, font, theme::TEXT);
+        p.text(Pos2::new(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, text, font, theme::TEXT);
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
     }
 }
