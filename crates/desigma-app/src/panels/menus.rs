@@ -496,7 +496,7 @@ fn main_nodes(app: &App) -> Vec<Node> {
                 leaf("Check for updates automatically", "", Action::ToggleUpdateCheck)
                     .on(crate::RELEASE_BUILD && !app.updater.no_auto_check)
                     .off(!crate::RELEASE_BUILD),
-                leaf("Claude\u{2026}", "", Action::Mcp),
+                leaf("Claude…", "", Action::Mcp),
                 leaf("Allow MCP agents to control this editor", "", Action::ToggleAgentBridge).on(app.bridge.bridge.is_some()),
                 submenu(
                     "Language",
