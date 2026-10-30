@@ -999,3 +999,14 @@ fn empty_ime_preedit_keeps_selected_text() {
     ime(&mut s, egui::ImeEvent::Commit("你".into()));
     assert_eq!(text_of(&s, id).content, "你");
 }
+
+#[test]
+fn projects_next_to_the_library_are_reported() {
+    let base = std::env::temp_dir().join(format!("desigma-stray-{}", std::process::id()));
+    let lib = base.join("library");
+    std::fs::create_dir_all(lib.join("projects")).unwrap();
+    assert_eq!(crate::shell::stray_projects_dir(&lib), None, "only the library's own projects");
+    std::fs::create_dir_all(base.join("projects")).unwrap();
+    assert_eq!(crate::shell::stray_projects_dir(&lib), Some(base.join("projects")));
+    let _ = std::fs::remove_dir_all(&base);
+}
