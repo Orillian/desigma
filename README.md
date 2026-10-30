@@ -386,6 +386,8 @@ Logos, social images, banners and copy are in [`marketing/`](marketing/).
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Unless you state otherwise, any contribution you submit for inclusion is dual-licensed the same way, without additional terms.
 
+The licenses cover the code, not the desigma name, logo or icon. Forks are welcome but must use their own name and branding; see [TRADEMARKS.md](TRADEMARKS.md).
+
 Bundled Inter is © The Inter Project Authors, licensed under the SIL Open Font License 1.1 (see `crates/desigma-fonts/assets/inter/OFL.txt`).
 
 Editor icons use Lucide under its ISC license (see `crates/desigma-app/assets/icons/lucide/LICENSE`). Release packages include both asset notices in `licenses/` (inside `desigma.app/Contents/Resources/` on macOS).
