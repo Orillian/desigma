@@ -15,6 +15,7 @@ mod find;
 mod fonts;
 mod history;
 mod home;
+mod i18n;
 mod icons;
 mod instance;
 mod io;

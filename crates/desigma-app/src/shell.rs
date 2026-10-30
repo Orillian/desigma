@@ -45,6 +45,9 @@ impl Shell {
         // "Open in new window" children leave update checks to the first window
         let launch = !screenshot && opts.open_id.is_none();
         let (gpu_flag, bridge_flag, library) = (opts.gpu, opts.bridge, opts.library.clone());
+        // Saved UI language, else the system one on an interactive launch (screenshots stay English
+        // unless a language was saved).
+        crate::i18n::set(crate::i18n::startup(library.as_deref(), !screenshot));
         let mut shell = Self::build(&cc.egui_ctx, opts);
         if let Some(rs) = &cc.wgpu_render_state {
             if let Some(max) = canvas::gpu::init(rs) {
