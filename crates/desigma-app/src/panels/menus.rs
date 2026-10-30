@@ -111,6 +111,8 @@ pub enum Action {
     ToggleAgentBridge,
     /// Preferences -> Claude…: register the installed MCP server with Claude.
     Mcp,
+    /// Preferences -> Language -> ...
+    SetLanguage(crate::i18n::Lang),
     /// Help -> Check for updates.
     CheckForUpdates,
     Shortcuts,
@@ -236,6 +238,7 @@ pub fn run(app: &mut App, ctx: &Context, a: Action) {
             app.mcp_error = None;
             app.mcp_dialog = true;
         }
+        Action::SetLanguage(lang) => app.set_language(lang),
         Action::CheckForUpdates => app.check_for_updates(ctx, true),
         Action::Shortcuts => app.show_shortcuts(),
         Action::AboutDesigma => app.show_about(),
@@ -495,6 +498,10 @@ fn main_nodes(app: &App) -> Vec<Node> {
                     .off(!crate::RELEASE_BUILD),
                 leaf("Claude\u{2026}", "", Action::Mcp),
                 leaf("Allow MCP agents to control this editor", "", Action::ToggleAgentBridge).on(app.bridge.bridge.is_some()),
+                submenu(
+                    "Language",
+                    crate::i18n::Lang::ALL.iter().map(|l| leaf(l.native_name(), "", Action::SetLanguage(*l)).on(crate::i18n::current() == *l)).collect(),
+                ),
             ],
         ),
         leaf("Libraries", "", Action::About).off(true).sep(),

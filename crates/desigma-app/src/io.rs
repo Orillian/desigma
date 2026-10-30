@@ -13,6 +13,23 @@ pub fn load_path(path: &Path) -> Result<Document, String> {
 /// [`load_path`], plus notes on what an import could not carry over (empty for every format
 /// but `.pen`).
 pub fn load_path_noted(path: &Path) -> Result<(Document, Vec<String>), String> {
+    let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    guard(&file, || load_unguarded(path))
+}
+
+/// Runs an import so that a bug in an importer reports an error instead of closing the app.
+/// The panic hook has already written the details to the crash log.
+fn guard<T>(file: &str, load: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(load)).unwrap_or_else(|payload| {
+        Err(format!(
+            "Cannot open {file}: desigma hit an internal error ({}). Details were saved to {}; please attach that file to a bug report.",
+            crate::crash::payload_message(payload.as_ref()),
+            crate::crash::log_path().display()
+        ))
+    })
+}
+
+fn load_unguarded(path: &Path) -> Result<(Document, Vec<String>), String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let mut notes = Vec::new();
     let mut doc = match ext.as_str() {
@@ -39,7 +56,8 @@ pub fn load_path_noted(path: &Path) -> Result<(Document, Vec<String>), String> {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("svg");
             let mut doc = Document::new(name);
             let page = doc.add_page("Page 1");
-            desigma_svg::import_svg_named(&text, name, &mut doc, page, Vec2::ZERO).map_err(|e| format!("Cannot import SVG: {e}"))?;
+            let opts = desigma_svg::ImportOptions { base_dir: path.parent().map(Path::to_path_buf) };
+            desigma_svg::import_svg_named_with(&text, name, &mut doc, page, Vec2::ZERO, &opts).map_err(|e| format!("Cannot import SVG: {e}"))?;
             doc
         }
         _ => {
@@ -170,6 +188,26 @@ mod tests {
         std::fs::write(&bad, [0u8, 1, 2]).unwrap();
         assert!(load_path(&bad).unwrap_err().contains("Cannot import .pen"));
         std::fs::remove_file(&bad).ok();
+    }
+
+    #[test]
+    fn macos_bundle_declares_the_native_document_type() {
+        // Finder opens a document only when its extension resolves to a declared UTI that the
+        // app lists in `LSItemContentTypes`; extensions alone leave a dyn.* type (#29).
+        let plist = include_str!("../../../packaging/macos/Info.plist.in");
+        let uti = "<string>ai.deepfounder.desigma.document</string>";
+        assert!(plist.contains("<key>UTExportedTypeDeclarations</key>"));
+        assert!(plist.matches(uti).count() >= 2, "exported and referenced by the document type");
+        assert!(plist.contains(&format!("<string>{NATIVE_EXT}</string>")));
+        assert!(plist.contains("<string>com.figma.document</string>") && plist.contains("<key>UTImportedTypeDeclarations</key>"));
+    }
+
+    #[test]
+    fn importer_panics_become_errors() {
+        let err = guard("broken.fig", || -> Result<(), String> { panic!("index out of bounds") }).unwrap_err();
+        assert!(err.starts_with("Cannot open broken.fig: desigma hit an internal error (index out of bounds)"));
+        assert!(err.contains("crash.log"));
+        assert_eq!(guard("ok.fig", || Ok::<_, String>(3)), Ok(3));
     }
 
     #[test]

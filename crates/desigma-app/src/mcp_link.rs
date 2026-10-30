@@ -26,12 +26,6 @@ pub fn claude_desktop_config() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Claude").join("claude_desktop_config.json")
 }
 
-/// Claude Code's user config, when that program has been used on this machine.
-pub fn claude_code_config() -> Option<PathBuf> {
-    let path = dirs::home_dir()?.join(".claude.json");
-    path.is_file().then_some(path)
-}
-
 fn workspace_dir(app: &App) -> PathBuf {
     app.lib.as_ref().map(|l| l.root().to_path_buf()).unwrap_or_else(desigma_library::Library::default_root)
 }
@@ -86,20 +80,37 @@ pub fn connect(app: &mut App, ctx: &Context) -> Result<String, String> {
     std::fs::create_dir_all(&workspace).map_err(|e| format!("Cannot prepare the library folder: {e}"))?;
     let entry = server_entry(&program, &workspace);
     write_server(&claude_desktop_config(), &entry)?;
-    let mut note = String::new();
-    if let Some(code) = claude_code_config() {
-        match write_server(&code, &entry) {
-            Ok(()) => note = " Claude Code was updated too.".into(),
-            Err(e) => note = format!(" Claude Code was left unchanged ({e})."),
-        }
-    }
+    let code = register_claude_code(&program, &workspace);
     if app.bridge.bridge.is_none() {
         app.start_bridge(ctx)?;
         if let Some(lib) = &app.lib {
             crate::comments::settings::save_flag(lib.root(), crate::bridge::FLAG, true)?;
         }
     }
+    if let Some(path) = app.file_path.clone() {
+        app.publish_shared_copy(&path);
+    }
+    let note = if code { " Claude Code was registered too." } else { "" };
     Ok(format!("Connected. Quit Claude completely, then open it again.{note}"))
+}
+
+/// Claude Code keeps its own live config. Ask its CLI to register the server instead of rewriting
+/// that file. A missing CLI, or a server that is already registered, leaves Claude Desktop as the
+/// connection that was just written.
+fn register_claude_code(program: &Path, workspace: &Path) -> bool {
+    let Ok(status) = std::process::Command::new("claude")
+        .args(["mcp", "add", "--scope", "user", SERVER, "--"])
+        .arg(program)
+        .arg("--workspace")
+        .arg(workspace)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    else {
+        return false;
+    };
+    status.success()
 }
 
 pub fn show(app: &mut App, ctx: &Context) {
@@ -111,10 +122,9 @@ pub fn show(app: &mut App, ctx: &Context) {
     const W: f32 = 460.0;
     const PAD: f32 = 20.0;
     let linked = mcp_program().is_some_and(|p| std::fs::read_to_string(claude_desktop_config()).ok().is_some_and(|t| config_points_at(&t, &p)));
-    let body =
-        "Connects this installation to Claude. Claude works on the files in your Desigma library, and on the document open in this window. Nothing to copy.";
+    let body = "Connects this installation to Claude. While that connection is on, a file you open from outside your library is copied into the library so Claude can read it. Nothing is copied before you connect.";
     let status = if linked { "Status: connected to Claude" } else { "Status: not connected" };
-    let rect = Rect::from_center_size(screen.center() - Vec2::new(0.0, 24.0), Vec2::new(W, 248.0));
+    let rect = Rect::from_center_size(screen.center() - Vec2::new(0.0, 24.0), Vec2::new(W, 280.0));
     let mut close = esc;
     let mut connect_clicked = false;
     egui::Area::new(Id::new("mcp-link")).order(Order::Foreground).fixed_pos(screen.min).interactable(true).show(ctx, |ui| {
@@ -127,10 +137,10 @@ pub fn show(app: &mut App, ctx: &Context) {
         p.text(Pos2::new(x0, rect.top() + PAD + 12.0), Align2::LEFT_CENTER, "Claude", theme::font_large_strong(), theme::TEXT);
         let galley = p.layout(body.into(), theme::font_body(), theme::TEXT_SECONDARY, text_w);
         p.galley(Pos2::new(x0, rect.top() + 52.0), galley, theme::TEXT_SECONDARY);
-        p.text(Pos2::new(x0, rect.top() + 128.0), Align2::LEFT_CENTER, status, theme::font_body_strong(), theme::TEXT);
+        p.text(Pos2::new(x0, rect.top() + 168.0), Align2::LEFT_CENTER, status, theme::font_body_strong(), theme::TEXT);
         if let Some(err) = &app.mcp_error {
             let g = p.layout(err.clone(), theme::font_small(), theme::DANGER, text_w);
-            p.galley(Pos2::new(x0, rect.top() + 148.0), g, theme::DANGER);
+            p.galley(Pos2::new(x0, rect.top() + 188.0), g, theme::DANGER);
         }
         let by = rect.bottom() - PAD - 32.0;
         let connect_w = button_width(&p, "Connect to Claude") + 16.0;

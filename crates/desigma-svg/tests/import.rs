@@ -1,7 +1,7 @@
 //! Structure of imported documents.
 
 use desigma_doc::*;
-use desigma_svg::{import_svg, import_svg_named, looks_like_svg, svg_to_nodes};
+use desigma_svg::{import_svg, import_svg_named, import_svg_named_with, looks_like_svg, svg_to_nodes, ImportOptions};
 
 fn import(svg: &str) -> (Document, NodeId) {
     let mut doc = Document::new("t");
@@ -353,4 +353,67 @@ fn errors_and_sniffing() {
     assert!(!looks_like_svg("hello <svg>"));
     let id = import_svg_named("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"5\" height=\"5\"/>", "logo", &mut doc, page, Vec2::ZERO).unwrap();
     assert_eq!(doc.get(id).unwrap().name, "logo");
+}
+
+#[test]
+fn unnamed_multi_child_groups_stay_groups() {
+    // Hand-written artboards: each <g> holds a background and its content (#34).
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="900" height="300">
+      <g><rect width="400" height="300" fill="#eee"/><rect x="20" y="20" width="50" height="50" fill="#f00"/></g>
+      <g><rect x="500" width="400" height="300" fill="#ddd"/><rect x="520" y="20" width="50" height="50" fill="#00f"/></g>
+    </svg>"##;
+    let (doc, root) = import(svg);
+    let top = kids(&doc, root);
+    assert_eq!(top.len(), 2, "{}", dump(&doc, root));
+    assert!(top.iter().all(|g| matches!(g.kind, NodeKind::Group) && g.children.len() == 2 && g.name == "Group"), "{}", dump(&doc, root));
+    // A single-child wrapper still folds into its child, and desigma's own export wrappers
+    // (data-name) still join their parent.
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+      <g><rect width="10" height="10" fill="#f00"/></g>
+      <g data-name="Wrapper"><rect x="20" width="10" height="10" fill="#0f0"/><rect x="40" width="10" height="10" fill="#00f"/></g>
+    </svg>"##;
+    let (doc, root) = import(svg);
+    assert!(kids(&doc, root).iter().all(|n| matches!(n.kind, NodeKind::Rectangle)), "{}", dump(&doc, root));
+}
+
+fn png_file(path: &std::path::Path) {
+    image::RgbaImage::from_pixel(4, 2, image::Rgba([0, 128, 255, 255])).save(path).unwrap();
+}
+
+fn import_file(dir: &std::path::Path, svg: &str) -> Document {
+    let mut doc = Document::new("t");
+    let page = doc.add_page("Page 1");
+    import_svg_named_with(svg, "f", &mut doc, page, Vec2::ZERO, &ImportOptions { base_dir: Some(dir.to_path_buf()) }).unwrap();
+    doc
+}
+
+#[test]
+fn images_next_to_the_svg_file_load_and_others_do_not() {
+    let base = std::env::temp_dir().join(format!("desigma-svg-href-{}", std::process::id()));
+    let dir = base.join("design");
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    png_file(&dir.join("assets/hero image.png"));
+    png_file(&base.join("outside.png"));
+    let svg = |href: &str| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="40" height="20"><image width="20" height="10" xlink:href="{href}"/></svg>"#
+        )
+    };
+    let image_count = |doc: &Document| doc.images.len();
+
+    let doc = import_file(&dir, &svg("assets/hero%20image.png"));
+    assert_eq!(image_count(&doc), 1, "relative image next to the SVG is embedded");
+    let doc = import_file(&dir, &svg("./assets/hero image.png"));
+    assert_eq!(image_count(&doc), 1);
+
+    // Outside the SVG's folder, absolute paths and URLs are never read.
+    let outside = base.join("outside.png");
+    for href in ["../outside.png", outside.to_str().unwrap(), "file:///etc/hostname", "https://example.com/a.png"] {
+        let doc = import_file(&dir, &svg(href));
+        assert_eq!(image_count(&doc), 0, "{href}");
+    }
+    // Without a base folder (paste, MCP text), no file is read at all.
+    let (doc, _) = import(&svg("assets/hero%20image.png"));
+    assert_eq!(image_count(&doc), 0);
+    let _ = std::fs::remove_dir_all(&base);
 }

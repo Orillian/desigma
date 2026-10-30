@@ -11,6 +11,7 @@ mod clipboard;
 mod collab;
 mod comments;
 mod comp_ops;
+mod crash;
 mod decks;
 mod demo;
 mod dev;
@@ -19,6 +20,7 @@ mod find;
 mod fonts;
 mod history;
 mod home;
+mod i18n;
 mod icons;
 mod instance;
 mod io;
@@ -94,6 +96,7 @@ fn attach_parent_console() {
 }
 
 fn main() {
+    crash::install();
     #[cfg(all(windows, not(debug_assertions), not(test)))]
     attach_parent_console();
     let opts = match cli::parse(std::env::args().skip(1)) {
@@ -109,6 +112,11 @@ fn main() {
     }
     if opts.version {
         println!("desigma {VERSION}");
+        return;
+    }
+    if opts.print_library_path {
+        let root = opts.library.clone().unwrap_or_else(desigma_library::Library::default_root);
+        println!("{}", root.display());
         return;
     }
     if let Some(file) = &opts.export_animation {
@@ -164,7 +172,9 @@ fn main() {
     // normally started when the window closed; this catches a close that skipped that frame
     updater::install::run_stashed();
     if screenshot_mode && !shell::SHOT_OK.load(Ordering::SeqCst) {
-        eprintln!("desigma: screenshot was not captured");
+        let why = shell::SHOT_ERR.lock().map(|e| e.clone()).unwrap_or_default();
+        let why = if why.is_empty() { "the window closed before a frame was captured".to_string() } else { why };
+        eprintln!("desigma: screenshot was not captured: {why}");
         std::process::exit(1);
     }
 }
