@@ -7,6 +7,7 @@ mod clipboard;
 mod collab;
 mod comments;
 mod comp_ops;
+mod crash;
 mod decks;
 mod demo;
 mod dev;
@@ -76,6 +77,7 @@ fn window_icon() -> Option<egui::IconData> {
 }
 
 fn main() {
+    crash::install();
     let opts = match cli::parse(std::env::args().skip(1)) {
         Ok(o) => o,
         Err(e) => {
